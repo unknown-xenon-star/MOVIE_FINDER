@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Movie JSON Table Viewer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            padding: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+        th, td {
+            padding: 12px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        th {
+            background-color: #333;
+            color: white;
+        }
+        img {
+            width: 80px;
+            border-radius: 6px;
+        }
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+        a {
+            color: #1a73e8;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+
+<h2>Movie List (Loaded from JSON File)</h2>
+
+<table id="movieTable">
+    <thead>
+        <tr>
+            <th>Poster</th>
+            <th>Title</th>
+            <th>Year</th>
+            <th>Language</th>
+            <th>Description</th>
+            <th>Links</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<script>
+fetch('movies.json')
+    .then(response => response.json())
+    .then(data => {
+        const tableBody = document.querySelector('#movieTable tbody');
+
+        data.forEach(movie => {
+            const row = document.createElement('tr');
+
+            row.innerHTML = `
+                <td><img src="${movie.poster_url}" alt="Poster"></td>
+                <td>${movie.title}</td>
+                <td>${movie.year}</td>
+                <td>${movie.language}</td>
+                <td>${movie.description}</td>
+                <td>
+                    <a href="${movie.movie_page_url}" target="_blank">Movie Page</a><br>
+                    <a href="${movie.source_url}" target="_blank">Source</a>
+                </td>
+            `;
+
+            tableBody.appendChild(row);
+        });
+    })
+    .catch(error => console.error('Error loading JSON:', error));
+</script>
+
+</body>
+</html>
