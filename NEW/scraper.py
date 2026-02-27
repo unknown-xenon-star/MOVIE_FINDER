@@ -188,23 +188,17 @@ def scrape(
 
         page_count += 1
 
-        # First page is normal search
-        if current_start == 1:
-            url = f"{BASE_URL}?{QUERY}&count={page_size}&start={current_start}"
-        else:
-            # Load-more uses _ajax endpoint
-            url = f"{BASE_URL}_ajax?{QUERY}&count={page_size}&start={current_start}"
-
+        url = f"{BASE_URL}?{QUERY}&count={page_size}&start={current_start}"
         print(f"Scraping page {page_count}: {url}")
 
         response = session.get(url, timeout=30)
         response.raise_for_status()
-        html = response.text
 
+        html = response.text
         items = parse_items(html)
 
         if not items:
-            print("No more items found. Stopping.")
+            print("No items found. Stopping.")
             break
 
         new_on_page = 0
@@ -215,13 +209,14 @@ def scrape(
             new_on_page += 1
             all_items.append(item)
 
-        if new_on_page == 0:
-            print("No new unique items found. Stopping.")
+        print(f"Found {new_on_page} new items")
+
+        # If fewer results returned than requested, we reached end
+        if len(items) < page_size:
+            print("Last page reached.")
             break
 
-        # Move to next batch
         current_start += page_size
-
         time.sleep(sleep_seconds)
 
     # Save results
@@ -251,8 +246,6 @@ def scrape(
         writer.writerows(all_items)
 
     print(f"Saved {len(all_items)} movies")
-    print(f"JSON: {json_path}")
-    print(f"CSV:  {csv_path}")
 
     return all_items
 
