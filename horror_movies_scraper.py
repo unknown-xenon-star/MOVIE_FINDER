@@ -76,6 +76,7 @@ class MovieRecord:
     title: str
     movie_page_url: str
     poster_url: str
+    description: str
     source_url: str
 
 
@@ -136,14 +137,30 @@ def extract_poster_url(html: str) -> str:
     return ""
 
 
-def fetch_poster_url(session: requests.Session, movie_page_url: str, verbose: bool) -> str:
-    log(f"    Fetching poster: {movie_page_url}", verbose)
+def extract_description(html: str) -> str:
+    soup = BeautifulSoup(html, "lxml")
+    content = soup.select_one("div.mw-parser-output")
+    if content:
+        for para in content.select("p"):
+            text = para.get_text(" ", strip=True)
+            if len(text) >= 60:
+                return " ".join(text.split())
+
+    meta_desc = soup.select_one('meta[property="og:description"]')
+    if meta_desc and meta_desc.get("content"):
+        return " ".join(meta_desc["content"].split())
+
+    return ""
+
+
+def fetch_movie_details(session: requests.Session, movie_page_url: str, verbose: bool) -> tuple[str, str]:
+    log(f"    Fetching details: {movie_page_url}", verbose)
     try:
         html = fetch_html(session, movie_page_url)
     except requests.RequestException:
-        log("    Poster fetch failed; using empty poster_url", verbose)
-        return ""
-    return extract_poster_url(html)
+        log("    Details fetch failed; using empty poster/description", verbose)
+        return "", ""
+    return extract_poster_url(html), extract_description(html)
 
 
 def save_checkpoint(
@@ -151,7 +168,7 @@ def save_checkpoint(
     args: argparse.Namespace,
     completed_tasks: set[str],
     records: list[MovieRecord],
-    poster_cache: dict[str, str],
+    movie_details_cache: dict[str, dict[str, str]],
 ) -> None:
     data = {
         "version": 1,
@@ -162,14 +179,14 @@ def save_checkpoint(
         },
         "completed_tasks": sorted(completed_tasks),
         "records": [asdict(record) for record in records],
-        "poster_cache": poster_cache,
+        "movie_details_cache": movie_details_cache,
     }
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def load_checkpoint(
     path: Path, args: argparse.Namespace
-) -> tuple[set[str], list[MovieRecord], dict[str, str]]:
+) -> tuple[set[str], list[MovieRecord], dict[str, dict[str, str]]]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     expected = {
         "start_year": args.start_year,
@@ -182,16 +199,34 @@ def load_checkpoint(
         )
 
     completed = set(raw.get("completed_tasks", []))
-    records = [MovieRecord(**item) for item in raw.get("records", [])]
-    poster_cache = dict(raw.get("poster_cache", {}))
-    return completed, records, poster_cache
+    records = []
+    for item in raw.get("records", []):
+        records.append(
+            MovieRecord(
+                year=item["year"],
+                language=item["language"],
+                title=item["title"],
+                movie_page_url=item["movie_page_url"],
+                poster_url=item.get("poster_url", ""),
+                description=item.get("description", ""),
+                source_url=item["source_url"],
+            )
+        )
+
+    cached = raw.get("movie_details_cache")
+    if cached is None:
+        # Backward compatibility with older checkpoints that only stored posters.
+        legacy_posters = dict(raw.get("poster_cache", {}))
+        cached = {url: {"poster_url": poster, "description": ""} for url, poster in legacy_posters.items()}
+    movie_details_cache = dict(cached)
+    return completed, records, movie_details_cache
 
 
 def scrape_task(
     session: requests.Session,
     task: ScrapeTask,
     seen_titles: set[tuple[int, str]],
-    poster_cache: dict[str, str],
+    movie_details_cache: dict[str, dict[str, str]],
     verbose: bool,
 ) -> list[MovieRecord]:
     url = category_url_for_task(task)
@@ -214,8 +249,12 @@ def scrape_task(
                 continue
             seen_titles.add(dedupe_key)
 
-            if movie_page_url not in poster_cache:
-                poster_cache[movie_page_url] = fetch_poster_url(session, movie_page_url, verbose)
+            if movie_page_url not in movie_details_cache:
+                poster_url, description = fetch_movie_details(session, movie_page_url, verbose)
+                movie_details_cache[movie_page_url] = {
+                    "poster_url": poster_url,
+                    "description": description,
+                }
                 time.sleep(REQUEST_DELAY_SECONDS)
 
             task_records.append(
@@ -224,7 +263,8 @@ def scrape_task(
                     language=task.language,
                     title=title,
                     movie_page_url=movie_page_url,
-                    poster_url=poster_cache[movie_page_url],
+                    poster_url=movie_details_cache[movie_page_url].get("poster_url", ""),
+                    description=movie_details_cache[movie_page_url].get("description", ""),
                     source_url=url,
                 )
             )
@@ -241,7 +281,9 @@ def scrape_task(
 def write_csv(path: str, records: Iterable[MovieRecord]) -> None:
     with open(path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["year", "language", "title", "movie_page_url", "poster_url", "source_url"])
+        writer.writerow(
+            ["year", "language", "title", "movie_page_url", "poster_url", "description", "source_url"]
+        )
         for record in records:
             writer.writerow(
                 [
@@ -250,6 +292,7 @@ def write_csv(path: str, records: Iterable[MovieRecord]) -> None:
                     record.title,
                     record.movie_page_url,
                     record.poster_url,
+                    record.description,
                     record.source_url,
                 ]
             )
@@ -305,10 +348,10 @@ def main() -> None:
     checkpoint_path = Path(args.checkpoint)
     completed_tasks: set[str] = set()
     records: list[MovieRecord] = []
-    poster_cache: dict[str, str] = {}
+    movie_details_cache: dict[str, dict[str, str]] = {}
 
     if args.resume and checkpoint_path.exists():
-        completed_tasks, records, poster_cache = load_checkpoint(checkpoint_path, args)
+        completed_tasks, records, movie_details_cache = load_checkpoint(checkpoint_path, args)
         print(
             f"Resumed from checkpoint: {len(completed_tasks)} tasks done, "
             f"{len(records)} records loaded"
@@ -345,12 +388,12 @@ def main() -> None:
                     log(f"Skipping completed task: {key}", args.verbose)
                     continue
 
-                task_records = scrape_task(session, task, seen_titles, poster_cache, args.verbose)
+                task_records = scrape_task(session, task, seen_titles, movie_details_cache, args.verbose)
                 records.extend(task_records)
                 completed_tasks.add(key)
                 completed_since_start += 1
 
-                save_checkpoint(checkpoint_path, args, completed_tasks, records, poster_cache)
+                save_checkpoint(checkpoint_path, args, completed_tasks, records, movie_details_cache)
 
                 if args.pause_after > 0 and completed_since_start >= args.pause_after:
                     print(
@@ -363,7 +406,7 @@ def main() -> None:
                 time.sleep(REQUEST_DELAY_SECONDS)
 
     except KeyboardInterrupt:
-        save_checkpoint(checkpoint_path, args, completed_tasks, records, poster_cache)
+        save_checkpoint(checkpoint_path, args, completed_tasks, records, movie_details_cache)
         print(
             f"Interrupted. Progress saved to {checkpoint_path}. "
             f"Resume with: --resume --checkpoint {checkpoint_path}"
@@ -372,7 +415,7 @@ def main() -> None:
 
     records.sort(key=lambda rec: (rec.year, rec.language, rec.title.lower()))
     write_csv(args.output, records)
-    save_checkpoint(checkpoint_path, args, completed_tasks, records, poster_cache)
+    save_checkpoint(checkpoint_path, args, completed_tasks, records, movie_details_cache)
     print(f"Saved {len(records)} records to {args.output}")
     print(f"Checkpoint updated: {checkpoint_path}")
 

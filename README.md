@@ -7,6 +7,7 @@ It includes:
 - Language-specific coverage (South and non-South categories).
 - South Indian priority by default (`Tamil`, `Telugu`, `Malayalam`, `Kannada` first).
 - Poster URL extraction from each movie's Wikipedia page.
+- Description extraction from each movie page (first meaningful paragraph).
 - Pause/resume support with checkpoint files.
 
 ## Features
@@ -28,6 +29,7 @@ CSV columns:
 - `title`
 - `movie_page_url`
 - `poster_url`
+- `description`
 - `source_url`
 
 ## Supported Category Sources
