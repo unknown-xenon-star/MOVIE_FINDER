@@ -19,6 +19,11 @@ REQUEST_TIMEOUT = 20
 REQUEST_DELAY_SECONDS = 0.5
 
 
+def log(message: str, verbose: bool) -> None:
+    if verbose:
+        print(message)
+
+
 @dataclass(frozen=True)
 class MovieRecord:
     year: int
@@ -81,30 +86,35 @@ def extract_poster_url(html: str) -> str:
     return ""
 
 
-def fetch_poster_url(session: requests.Session, movie_page_url: str) -> str:
+def fetch_poster_url(session: requests.Session, movie_page_url: str, verbose: bool) -> str:
+    log(f"  Fetching poster from: {movie_page_url}", verbose)
     try:
         html = fetch_html(session, movie_page_url)
     except requests.RequestException:
+        log("  Poster fetch failed; leaving empty poster_url", verbose)
         return ""
     return extract_poster_url(html)
 
 
-def scrape_year_titles(session: requests.Session, year: int) -> list[MovieRecord]:
+def scrape_year_titles(session: requests.Session, year: int, verbose: bool) -> list[MovieRecord]:
     url = category_url_for_year(year)
     records: list[MovieRecord] = []
     seen_titles: set[str] = set()
     poster_cache: dict[str, str] = {}
+    page_number = 1
 
     while url:
+        log(f"Scraping year {year} page {page_number}: {url}", verbose)
         html = fetch_html(session, url)
         titles, next_page = extract_titles_and_next_page(html)
+        log(f"  Found {len(titles)} titles on page {page_number}", verbose)
 
         for title, movie_page_url in titles:
             if title in seen_titles:
                 continue
             seen_titles.add(title)
             if movie_page_url not in poster_cache:
-                poster_cache[movie_page_url] = fetch_poster_url(session, movie_page_url)
+                poster_cache[movie_page_url] = fetch_poster_url(session, movie_page_url, verbose)
                 time.sleep(REQUEST_DELAY_SECONDS)
             records.append(
                 MovieRecord(
@@ -117,9 +127,11 @@ def scrape_year_titles(session: requests.Session, year: int) -> list[MovieRecord
             )
 
         url = next_page
+        page_number += 1
         if url:
             time.sleep(REQUEST_DELAY_SECONDS)
 
+    log(f"Completed year {year}: {len(records)} unique titles", verbose)
     return records
 
 
@@ -146,6 +158,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-year", type=int, default=2000, help="First year to scrape (default: 2000)")
     parser.add_argument("--end-year", type=int, default=2015, help="Last year to scrape, inclusive (default: 2015)")
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help=f"Output CSV file (default: {DEFAULT_OUTPUT})")
+    parser.add_argument("--verbose", action="store_true", help="Print progress logs while scraping")
     return parser.parse_args()
 
 
@@ -165,7 +178,7 @@ def main() -> None:
     with requests.Session() as session:
         session.headers.update(headers)
         for year in range(args.start_year, args.end_year + 1):
-            year_records = scrape_year_titles(session, year)
+            year_records = scrape_year_titles(session, year, args.verbose)
             all_records.extend(year_records)
             time.sleep(REQUEST_DELAY_SECONDS)
 
