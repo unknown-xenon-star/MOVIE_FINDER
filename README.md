@@ -34,21 +34,30 @@ CSV columns:
 - `description`
 - `source_url`
 
-## Supported Category Sources
+## Supported Categories
 
+Pan-India:
 - `indian`
+
+South India (default priority):
 - `tamil`
 - `telugu`
 - `malayalam`
 - `kannada`
+
+North/Central India:
 - `hindi`
-- `bengali`
-- `marathi`
 - `punjabi`
+- `bhojpuri`
+
+West India:
+- `marathi`
 - `gujarati`
+
+East/Northeast India:
+- `bengali`
 - `odia`
 - `assamese`
-- `bhojpuri`
 
 ## Requirements
 
@@ -122,6 +131,45 @@ python3 horror_movies_scraper.py --resume --checkpoint indian_movies_scrape_prog
 ```
 
 If interrupted with `Ctrl+C`, progress is saved automatically and can be resumed.
+
+## Checkpoint JSON Format
+
+The checkpoint file (default: `indian_movies_scrape_progress.json`) stores scrape progress in JSON:
+
+```json
+{
+  "version": 2,
+  "config": {
+    "start_year": 2000,
+    "end_year": 2015,
+    "languages": ["tamil", "telugu", "malayalam", "kannada", "indian"]
+  },
+  "completed_tasks": ["2000:tamil", "2000:telugu"],
+  "failed_tasks": {
+    "2001:indian": "404 Client Error: Not Found for url: ..."
+  },
+  "records": [
+    {
+      "year": 2000,
+      "language": "tamil",
+      "title": "Example Film",
+      "movie_page_url": "https://en.wikipedia.org/wiki/Example_Film",
+      "poster_url": "https://upload.wikimedia.org/...jpg",
+      "description": "Example description text.",
+      "source_url": "https://en.wikipedia.org/wiki/Category:2000_Tamil-language_films"
+    }
+  ],
+  "movie_details_cache": {
+    "https://en.wikipedia.org/wiki/Example_Film": {
+      "poster_url": "https://upload.wikimedia.org/...jpg",
+      "description": "Example description text."
+    }
+  }
+}
+```
+
+Task id format used in JSON and CLI:
+- `YEAR:LANGUAGE` (example: `2012:tamil`)
 
 ## Failed Tasks and Manual Recovery
 

@@ -1,45 +1,99 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Movie JSON Table Viewer</title>
+    <title>Movie Scraper Dashboard</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
+            background: #f4f6f9;
             padding: 20px;
         }
+        h1 { margin-bottom: 10px; }
+        h2 { margin-top: 40px; }
+
+        .card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
             background: white;
         }
+
         th, td {
-            padding: 12px;
+            padding: 8px;
             border: 1px solid #ddd;
-            text-align: left;
+            font-size: 13px;
+            vertical-align: top;
         }
+
         th {
-            background-color: #333;
+            background: #222;
             color: white;
         }
+
+        tr:nth-child(even) {
+            background: #f9f9f9;
+        }
+
         img {
-            width: 80px;
-            border-radius: 6px;
+            width: 60px;
+            border-radius: 4px;
         }
-        tr:hover {
-            background-color: #f1f1f1;
+
+        .success { color: green; font-weight: bold; }
+        .error { color: red; font-size: 12px; }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            background: #007bff;
+            color: white;
+            border-radius: 4px;
+            font-size: 12px;
+            margin: 2px;
         }
-        a {
-            color: #1a73e8;
-            text-decoration: none;
+
+        .toggle-btn {
+            cursor: pointer;
+            background: #333;
+            color: white;
+            padding: 6px 10px;
+            border-radius: 4px;
+            display: inline-block;
+            margin-bottom: 10px;
         }
+
+        .hidden { display: none; }
     </style>
 </head>
 <body>
 
-<h2>Movie List (Loaded from JSON File)</h2>
+<h1>Movie Scraper Dashboard</h1>
 
-<table id="movieTable">
+<div id="configSection" class="card"></div>
+
+<h2>Completed Tasks</h2>
+<div id="completedSection" class="card"></div>
+
+<h2>Failed Tasks</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Task</th>
+            <th>Error</th>
+        </tr>
+    </thead>
+    <tbody id="failedTable"></tbody>
+</table>
+
+<h2>Movie Records</h2>
+<table>
     <thead>
         <tr>
             <th>Poster</th>
@@ -50,34 +104,97 @@
             <th>Links</th>
         </tr>
     </thead>
-    <tbody></tbody>
+    <tbody id="recordsTable"></tbody>
+</table>
+
+<h2>Movie Details Cache</h2>
+<div class="toggle-btn" onclick="toggleCache()">Show / Hide Cache</div>
+
+<table id="cacheTable" class="hidden">
+    <thead>
+        <tr>
+            <th>Key</th>
+            <th>Details (JSON)</th>
+        </tr>
+    </thead>
+    <tbody id="cacheBody"></tbody>
 </table>
 
 <script>
-fetch('movies.json')
-    .then(response => response.json())
+function toggleCache() {
+    document.getElementById("cacheTable").classList.toggle("hidden");
+}
+
+fetch('data.json')
+    .then(res => res.json())
     .then(data => {
-        const tableBody = document.querySelector('#movieTable tbody');
 
-        data.forEach(movie => {
+        // CONFIG
+        document.getElementById('configSection').innerHTML = `
+            <strong>Version:</strong> ${data.version}<br>
+            <strong>Year Range:</strong> ${data.config.start_year} - ${data.config.end_year}<br>
+            <strong>Languages:</strong><br>
+            ${data.config.languages.map(l => 
+                `<span class="badge">${l}</span>`
+            ).join('')}
+        `;
+
+        // COMPLETED
+        document.getElementById('completedSection').innerHTML =
+            data.completed_tasks.length
+            ? data.completed_tasks.map(t => 
+                `<div class="success">✔ ${t}</div>`
+              ).join('')
+            : "No completed tasks";
+
+        // FAILED
+        const failedTable = document.getElementById('failedTable');
+        Object.entries(data.failed_tasks || {}).forEach(([task, error]) => {
             const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${task}</td>
+                <td class="error">${error}</td>
+            `;
+            failedTable.appendChild(row);
+        });
 
+        // RECORDS
+        const recordsTable = document.getElementById('recordsTable');
+        (data.records || []).forEach(movie => {
+            const row = document.createElement('tr');
             row.innerHTML = `
                 <td><img src="${movie.poster_url}" alt="Poster"></td>
                 <td>${movie.title}</td>
                 <td>${movie.year}</td>
                 <td>${movie.language}</td>
-                <td>${movie.description}</td>
+                <td>${movie.description.substring(0,150)}...</td>
                 <td>
                     <a href="${movie.movie_page_url}" target="_blank">Movie Page</a><br>
                     <a href="${movie.source_url}" target="_blank">Source</a>
                 </td>
             `;
-
-            tableBody.appendChild(row);
+            recordsTable.appendChild(row);
         });
+
+        // MOVIE DETAILS CACHE
+        const cacheBody = document.getElementById('cacheBody');
+        const cache = data.movie_details_cache || {};
+
+        if (Object.keys(cache).length === 0) {
+            cacheBody.innerHTML = `<tr><td colspan="2">No cached movie details</td></tr>`;
+        } else {
+            Object.entries(cache).forEach(([key, details]) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${key}</td>
+                    <td><pre>${JSON.stringify(details, null, 2)}</pre></td>
+                `;
+                cacheBody.appendChild(row);
+            });
+        }
+
     })
-    .catch(error => console.error('Error loading JSON:', error));
+    .catch(err => console.error("Error loading JSON:", err));
 </script>
 
 </body>
