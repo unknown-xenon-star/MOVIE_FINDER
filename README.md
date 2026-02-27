@@ -1,6 +1,6 @@
-# Indian Movies Scraper (2000-2015)
+# Indian Horror Movies Finder (2000-2015)
 
-This project scrapes Indian movie titles from Wikipedia category pages and saves a CSV dataset.
+This project strictly finds horror movies from Indian Wikipedia movie category pages and saves a CSV dataset.
 
 It includes:
 - All-India coverage via yearly `Indian films` category pages.
@@ -8,6 +8,7 @@ It includes:
 - South Indian priority by default (`Tamil`, `Telugu`, `Malayalam`, `Kannada` first).
 - Poster URL extraction from each movie's Wikipedia page.
 - Description extraction from each movie page (first meaningful paragraph).
+- Strict horror filtering (non-horror titles are dropped).
 - Pause/resume support with checkpoint files.
 - Parallel detail scraping for faster runs.
 - Failed-task tracking with manual recovery tools.
@@ -211,6 +212,7 @@ Tip:
 - Wikipedia category coverage can vary by year/language.
 - Missing category pages are skipped; the scraper continues.
 - Poster URLs depend on Wikipedia infobox/image availability.
+- Horror filtering is strict and uses page category labels, infobox genre, and description keywords.
 
 ## Files
 

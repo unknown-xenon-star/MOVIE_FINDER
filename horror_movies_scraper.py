@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scrape Indian movie titles, posters, and descriptions from Wikipedia (2000-2015).
+"""Strict horror-movie finder using Wikipedia category pages (2000-2015).
 
 Supports checkpoint-based pause/resume and manual recovery for failed tasks.
 """
@@ -80,6 +80,7 @@ class MovieRecord:
     movie_page_url: str
     poster_url: str
     description: str
+    is_horror: bool
     source_url: str
 
 
@@ -175,12 +176,44 @@ def extract_description(html: str) -> str:
     return ""
 
 
-def fetch_movie_details(movie_page_url: str, headers: dict[str, str]) -> tuple[str, str]:
+def is_horror_movie(html: str, description: str) -> bool:
+    soup = BeautifulSoup(html, "lxml")
+    keywords = ("horror", "supernatural horror", "slasher", "haunted")
+
+    # Strong signal: page categories include horror films.
+    for category_link in soup.select("#mw-normal-catlinks a"):
+        text = category_link.get_text(" ", strip=True).lower()
+        if "horror film" in text or "horror films" in text:
+            return True
+
+    # Secondary signal: infobox genre row contains horror.
+    infobox = soup.select_one("table.infobox")
+    if infobox:
+        for row in infobox.select("tr"):
+            header = row.select_one("th")
+            value = row.select_one("td")
+            if not header or not value:
+                continue
+            if "genre" in header.get_text(" ", strip=True).lower():
+                genre_text = value.get_text(" ", strip=True).lower()
+                if any(keyword in genre_text for keyword in keywords):
+                    return True
+
+    # Fallback signal: description starts with horror context.
+    desc = description.lower()
+    if any(keyword in desc for keyword in keywords):
+        return True
+
+    return False
+
+
+def fetch_movie_details(movie_page_url: str, headers: dict[str, str]) -> tuple[str, str, bool]:
     try:
         html = fetch_html_url(movie_page_url, headers)
     except requests.RequestException:
-        return "", ""
-    return extract_poster_url(html), extract_description(html)
+        return "", "", False
+    description = extract_description(html)
+    return extract_poster_url(html), description, is_horror_movie(html, description)
 
 
 def save_checkpoint(
@@ -189,7 +222,7 @@ def save_checkpoint(
     completed_tasks: set[str],
     failed_tasks: dict[str, str],
     records: list[MovieRecord],
-    movie_details_cache: dict[str, dict[str, str]],
+    movie_details_cache: dict[str, dict[str, str | bool]],
 ) -> None:
     data = {
         "version": 2,
@@ -208,7 +241,7 @@ def save_checkpoint(
 
 def load_checkpoint(
     path: Path, args: argparse.Namespace
-) -> tuple[set[str], dict[str, str], list[MovieRecord], dict[str, dict[str, str]]]:
+) -> tuple[set[str], dict[str, str], list[MovieRecord], dict[str, dict[str, str | bool]]]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     expected = {
         "start_year": args.start_year,
@@ -231,6 +264,7 @@ def load_checkpoint(
                 movie_page_url=item["movie_page_url"],
                 poster_url=item.get("poster_url", ""),
                 description=item.get("description", ""),
+                is_horror=bool(item.get("is_horror", True)),
                 source_url=item["source_url"],
             )
         )
@@ -238,7 +272,7 @@ def load_checkpoint(
     cached = raw.get("movie_details_cache")
     if cached is None:
         legacy_posters = dict(raw.get("poster_cache", {}))
-        cached = {url: {"poster_url": poster, "description": ""} for url, poster in legacy_posters.items()}
+        cached = {url: {"poster_url": poster, "description": "", "is_horror": True} for url, poster in legacy_posters.items()}
     movie_details_cache = dict(cached)
 
     return completed, failed, records, movie_details_cache
@@ -292,6 +326,7 @@ def load_manual_records(path: Path) -> list[MovieRecord]:
                     movie_page_url=row["movie_page_url"].strip(),
                     poster_url=row["poster_url"].strip(),
                     description=row["description"].strip(),
+                    is_horror=True,
                     source_url=row["source_url"].strip(),
                 )
             )
@@ -303,7 +338,7 @@ def scrape_task(
     session: requests.Session,
     headers: dict[str, str],
     seen_titles: set[tuple[int, str]],
-    movie_details_cache: dict[str, dict[str, str]],
+    movie_details_cache: dict[str, dict[str, str | bool]],
     workers: int,
     request_delay: float,
     verbose: bool,
@@ -346,22 +381,26 @@ def scrape_task(
                 }
                 for future in concurrent.futures.as_completed(future_by_url):
                     movie_page_url = future_by_url[future]
-                    poster_url, description = future.result()
+                    poster_url, description, is_horror = future.result()
                     movie_details_cache[movie_page_url] = {
                         "poster_url": poster_url,
                         "description": description,
+                        "is_horror": is_horror,
                     }
 
         for title, movie_page_url in fresh_entries:
-            details = movie_details_cache.get(movie_page_url, {"poster_url": "", "description": ""})
+            details = movie_details_cache.get(movie_page_url, {"poster_url": "", "description": "", "is_horror": False})
+            if not bool(details.get("is_horror", False)):
+                continue
             task_records.append(
                 MovieRecord(
                     year=task.year,
                     language=task.language,
                     title=title,
                     movie_page_url=movie_page_url,
-                    poster_url=details.get("poster_url", ""),
-                    description=details.get("description", ""),
+                    poster_url=str(details.get("poster_url", "")),
+                    description=str(details.get("description", "")),
+                    is_horror=True,
                     source_url=url,
                 )
             )
@@ -377,7 +416,7 @@ def scrape_task(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Scrape Indian movie titles from Wikipedia categories with poster and description."
+        description="Strict horror movie finder from Wikipedia categories with poster and description."
     )
     parser.add_argument("--start-year", type=int, default=2000, help="First year to scrape (default: 2000)")
     parser.add_argument("--end-year", type=int, default=2015, help="Last year to scrape, inclusive (default: 2015)")
@@ -465,7 +504,7 @@ def main() -> None:
     completed_tasks: set[str] = set()
     failed_tasks: dict[str, str] = {}
     records: list[MovieRecord] = []
-    movie_details_cache: dict[str, dict[str, str]] = {}
+    movie_details_cache: dict[str, dict[str, str | bool]] = {}
 
     if args.resume and checkpoint_path.exists():
         completed_tasks, failed_tasks, records, movie_details_cache = load_checkpoint(checkpoint_path, args)
@@ -494,6 +533,7 @@ def main() -> None:
                 movie_details_cache[record.movie_page_url] = {
                     "poster_url": record.poster_url,
                     "description": record.description,
+                    "is_horror": record.is_horror,
                 }
         print(f"Imported {len(imported)} manual records from {args.manual_records}")
 
