@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Scrape Indian movie titles and posters from Wikipedia (2000-2015).
+"""Scrape Indian movie titles, posters, and descriptions from Wikipedia (2000-2015).
 
-Supports checkpoint-based pause/resume.
+Supports checkpoint-based pause/resume and manual recovery for failed tasks.
 """
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
 import json
 import time
@@ -21,8 +22,10 @@ from bs4 import BeautifulSoup
 BASE_URL = "https://en.wikipedia.org"
 DEFAULT_OUTPUT = "indian_movies_2000_2015.csv"
 DEFAULT_CHECKPOINT = "indian_movies_scrape_progress.json"
+DEFAULT_FAILED_REPORT = "failed_tasks.csv"
 REQUEST_TIMEOUT = 20
 REQUEST_DELAY_SECONDS = 0.5
+DEFAULT_WORKERS = 8
 
 LANGUAGE_CATEGORY_TEMPLATES = {
     "indian": "Category:{year}_Indian_films",
@@ -84,6 +87,19 @@ def task_key(task: ScrapeTask) -> str:
     return f"{task.year}:{task.language}"
 
 
+def parse_task_id(raw_task_id: str) -> ScrapeTask:
+    try:
+        year_text, language = raw_task_id.split(":", 1)
+    except ValueError as exc:
+        raise ValueError(f"Invalid task id '{raw_task_id}'. Use YEAR:LANGUAGE") from exc
+
+    year = int(year_text)
+    language = language.strip().lower()
+    if language not in LANGUAGE_CATEGORY_TEMPLATES:
+        raise ValueError(f"Unknown language '{language}' in task id '{raw_task_id}'")
+    return ScrapeTask(year=year, language=language)
+
+
 def category_url_for_task(task: ScrapeTask) -> str:
     template = LANGUAGE_CATEGORY_TEMPLATES[task.language]
     return f"{BASE_URL}/wiki/{template.format(year=task.year)}"
@@ -91,6 +107,12 @@ def category_url_for_task(task: ScrapeTask) -> str:
 
 def fetch_html(session: requests.Session, url: str) -> str:
     response = session.get(url, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    return response.text
+
+
+def fetch_html_url(url: str, headers: dict[str, str]) -> str:
+    response = requests.get(url, timeout=REQUEST_TIMEOUT, headers=headers)
     response.raise_for_status()
     return response.text
 
@@ -153,12 +175,10 @@ def extract_description(html: str) -> str:
     return ""
 
 
-def fetch_movie_details(session: requests.Session, movie_page_url: str, verbose: bool) -> tuple[str, str]:
-    log(f"    Fetching details: {movie_page_url}", verbose)
+def fetch_movie_details(movie_page_url: str, headers: dict[str, str]) -> tuple[str, str]:
     try:
-        html = fetch_html(session, movie_page_url)
+        html = fetch_html_url(movie_page_url, headers)
     except requests.RequestException:
-        log("    Details fetch failed; using empty poster/description", verbose)
         return "", ""
     return extract_poster_url(html), extract_description(html)
 
@@ -167,17 +187,19 @@ def save_checkpoint(
     path: Path,
     args: argparse.Namespace,
     completed_tasks: set[str],
+    failed_tasks: dict[str, str],
     records: list[MovieRecord],
     movie_details_cache: dict[str, dict[str, str]],
 ) -> None:
     data = {
-        "version": 1,
+        "version": 2,
         "config": {
             "start_year": args.start_year,
             "end_year": args.end_year,
             "languages": args.languages,
         },
         "completed_tasks": sorted(completed_tasks),
+        "failed_tasks": failed_tasks,
         "records": [asdict(record) for record in records],
         "movie_details_cache": movie_details_cache,
     }
@@ -186,7 +208,7 @@ def save_checkpoint(
 
 def load_checkpoint(
     path: Path, args: argparse.Namespace
-) -> tuple[set[str], list[MovieRecord], dict[str, dict[str, str]]]:
+) -> tuple[set[str], dict[str, str], list[MovieRecord], dict[str, dict[str, str]]]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     expected = {
         "start_year": args.start_year,
@@ -194,12 +216,12 @@ def load_checkpoint(
         "languages": args.languages,
     }
     if raw.get("config") != expected:
-        raise ValueError(
-            "Checkpoint config mismatch. Use matching args or delete checkpoint file."
-        )
+        raise ValueError("Checkpoint config mismatch. Use matching args or delete checkpoint file.")
 
     completed = set(raw.get("completed_tasks", []))
-    records = []
+    failed = dict(raw.get("failed_tasks", {}))
+
+    records: list[MovieRecord] = []
     for item in raw.get("records", []):
         records.append(
             MovieRecord(
@@ -215,67 +237,11 @@ def load_checkpoint(
 
     cached = raw.get("movie_details_cache")
     if cached is None:
-        # Backward compatibility with older checkpoints that only stored posters.
         legacy_posters = dict(raw.get("poster_cache", {}))
         cached = {url: {"poster_url": poster, "description": ""} for url, poster in legacy_posters.items()}
     movie_details_cache = dict(cached)
-    return completed, records, movie_details_cache
 
-
-def scrape_task(
-    session: requests.Session,
-    task: ScrapeTask,
-    seen_titles: set[tuple[int, str]],
-    movie_details_cache: dict[str, dict[str, str]],
-    verbose: bool,
-) -> list[MovieRecord]:
-    url = category_url_for_task(task)
-    page_number = 1
-    task_records: list[MovieRecord] = []
-
-    while url:
-        log(f"Scraping {task.language} {task.year} page {page_number}: {url}", verbose)
-        try:
-            html = fetch_html(session, url)
-        except requests.RequestException:
-            log(f"  Could not fetch category page for {task.language} {task.year}; skipping task", verbose)
-            break
-        titles, next_page = extract_titles_and_next_page(html)
-        log(f"  Found {len(titles)} titles", verbose)
-
-        for title, movie_page_url in titles:
-            dedupe_key = (task.year, title.lower())
-            if dedupe_key in seen_titles:
-                continue
-            seen_titles.add(dedupe_key)
-
-            if movie_page_url not in movie_details_cache:
-                poster_url, description = fetch_movie_details(session, movie_page_url, verbose)
-                movie_details_cache[movie_page_url] = {
-                    "poster_url": poster_url,
-                    "description": description,
-                }
-                time.sleep(REQUEST_DELAY_SECONDS)
-
-            task_records.append(
-                MovieRecord(
-                    year=task.year,
-                    language=task.language,
-                    title=title,
-                    movie_page_url=movie_page_url,
-                    poster_url=movie_details_cache[movie_page_url].get("poster_url", ""),
-                    description=movie_details_cache[movie_page_url].get("description", ""),
-                    source_url=url,
-                )
-            )
-
-        url = next_page
-        page_number += 1
-        if url:
-            time.sleep(REQUEST_DELAY_SECONDS)
-
-    log(f"Completed {task.language} {task.year}: {len(task_records)} titles", verbose)
-    return task_records
+    return completed, failed, records, movie_details_cache
 
 
 def write_csv(path: str, records: Iterable[MovieRecord]) -> None:
@@ -298,9 +264,120 @@ def write_csv(path: str, records: Iterable[MovieRecord]) -> None:
             )
 
 
+def write_failed_tasks(path: Path, failed_tasks: dict[str, str]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["task_id", "error"])
+        for task_id in sorted(failed_tasks.keys()):
+            writer.writerow([task_id, failed_tasks[task_id]])
+
+
+def load_manual_records(path: Path) -> list[MovieRecord]:
+    required = {"year", "language", "title", "movie_page_url", "poster_url", "description", "source_url"}
+    records: list[MovieRecord] = []
+    with path.open("r", encoding="utf-8", newline="") as csvfile:
+        reader = csv.DictReader(csvfile)
+        if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
+            raise ValueError(
+                "Manual records CSV must include columns: year, language, title, movie_page_url, "
+                "poster_url, description, source_url"
+            )
+
+        for row in reader:
+            records.append(
+                MovieRecord(
+                    year=int(row["year"]),
+                    language=row["language"].strip().lower(),
+                    title=row["title"].strip(),
+                    movie_page_url=row["movie_page_url"].strip(),
+                    poster_url=row["poster_url"].strip(),
+                    description=row["description"].strip(),
+                    source_url=row["source_url"].strip(),
+                )
+            )
+    return records
+
+
+def scrape_task(
+    task: ScrapeTask,
+    session: requests.Session,
+    headers: dict[str, str],
+    seen_titles: set[tuple[int, str]],
+    movie_details_cache: dict[str, dict[str, str]],
+    workers: int,
+    request_delay: float,
+    verbose: bool,
+) -> tuple[list[MovieRecord], bool, str]:
+    url = category_url_for_task(task)
+    page_number = 1
+    task_records: list[MovieRecord] = []
+    task_seen_titles: set[str] = set()
+
+    while url:
+        log(f"Scraping {task.language} {task.year} page {page_number}: {url}", verbose)
+        try:
+            html = fetch_html(session, url)
+        except requests.RequestException as exc:
+            log(f"  Could not fetch category page for {task.language} {task.year}; task failed", verbose)
+            return task_records, False, str(exc)
+
+        titles, next_page = extract_titles_and_next_page(html)
+        log(f"  Found {len(titles)} titles", verbose)
+
+        fresh_entries: list[tuple[str, str]] = []
+        uncached_urls: set[str] = set()
+        for title, movie_page_url in titles:
+            title_key = title.lower()
+            global_key = (task.year, title_key)
+            if global_key in seen_titles or title_key in task_seen_titles:
+                continue
+            seen_titles.add(global_key)
+            task_seen_titles.add(title_key)
+            fresh_entries.append((title, movie_page_url))
+            if movie_page_url not in movie_details_cache:
+                uncached_urls.add(movie_page_url)
+
+        if uncached_urls:
+            log(f"  Fetching {len(uncached_urls)} detail pages with {workers} workers", verbose)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                future_by_url = {
+                    executor.submit(fetch_movie_details, movie_page_url, headers): movie_page_url
+                    for movie_page_url in uncached_urls
+                }
+                for future in concurrent.futures.as_completed(future_by_url):
+                    movie_page_url = future_by_url[future]
+                    poster_url, description = future.result()
+                    movie_details_cache[movie_page_url] = {
+                        "poster_url": poster_url,
+                        "description": description,
+                    }
+
+        for title, movie_page_url in fresh_entries:
+            details = movie_details_cache.get(movie_page_url, {"poster_url": "", "description": ""})
+            task_records.append(
+                MovieRecord(
+                    year=task.year,
+                    language=task.language,
+                    title=title,
+                    movie_page_url=movie_page_url,
+                    poster_url=details.get("poster_url", ""),
+                    description=details.get("description", ""),
+                    source_url=url,
+                )
+            )
+
+        url = next_page
+        page_number += 1
+        if url:
+            time.sleep(request_delay)
+
+    log(f"Completed {task.language} {task.year}: {len(task_records)} titles", verbose)
+    return task_records, True, ""
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Scrape Indian movie titles from Wikipedia categories with poster URLs."
+        description="Scrape Indian movie titles from Wikipedia categories with poster and description."
     )
     parser.add_argument("--start-year", type=int, default=2000, help="First year to scrape (default: 2000)")
     parser.add_argument("--end-year", type=int, default=2015, help="Last year to scrape, inclusive (default: 2015)")
@@ -337,6 +414,39 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Pause after N completed tasks and save checkpoint (0 means no manual pause)",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help=f"Concurrent workers for movie details (default: {DEFAULT_WORKERS})",
+    )
+    parser.add_argument(
+        "--request-delay",
+        type=float,
+        default=REQUEST_DELAY_SECONDS,
+        help=f"Delay between category requests in seconds (default: {REQUEST_DELAY_SECONDS})",
+    )
+    parser.add_argument(
+        "--failed-only",
+        action="store_true",
+        help="Scrape only tasks that are marked failed in checkpoint (use with --resume)",
+    )
+    parser.add_argument(
+        "--manual-complete-task",
+        action="append",
+        default=[],
+        help="Mark task as completed manually. Format YEAR:LANGUAGE (repeatable)",
+    )
+    parser.add_argument(
+        "--manual-records",
+        default="",
+        help="Manual records CSV to import (same columns as output CSV)",
+    )
+    parser.add_argument(
+        "--failed-report",
+        default=DEFAULT_FAILED_REPORT,
+        help=f"Failed tasks report CSV (default: {DEFAULT_FAILED_REPORT})",
+    )
     return parser.parse_args()
 
 
@@ -344,32 +454,67 @@ def main() -> None:
     args = parse_args()
     if args.start_year > args.end_year:
         raise ValueError("start-year must be less than or equal to end-year")
+    if args.workers < 1:
+        raise ValueError("workers must be >= 1")
+    if args.request_delay < 0:
+        raise ValueError("request-delay must be >= 0")
 
     checkpoint_path = Path(args.checkpoint)
+    failed_report_path = Path(args.failed_report)
+
     completed_tasks: set[str] = set()
+    failed_tasks: dict[str, str] = {}
     records: list[MovieRecord] = []
     movie_details_cache: dict[str, dict[str, str]] = {}
 
     if args.resume and checkpoint_path.exists():
-        completed_tasks, records, movie_details_cache = load_checkpoint(checkpoint_path, args)
+        completed_tasks, failed_tasks, records, movie_details_cache = load_checkpoint(checkpoint_path, args)
         print(
-            f"Resumed from checkpoint: {len(completed_tasks)} tasks done, "
-            f"{len(records)} records loaded"
+            f"Resumed from checkpoint: {len(completed_tasks)} completed, "
+            f"{len(failed_tasks)} failed, {len(records)} records loaded"
         )
 
+    for raw_task_id in args.manual_complete_task:
+        task = parse_task_id(raw_task_id)
+        key = task_key(task)
+        completed_tasks.add(key)
+        failed_tasks.pop(key, None)
+
+    if args.manual_records:
+        imported = load_manual_records(Path(args.manual_records))
+        existing = {(record.year, record.title.lower()): idx for idx, record in enumerate(records)}
+        for record in imported:
+            dedupe_key = (record.year, record.title.lower())
+            if dedupe_key in existing:
+                records[existing[dedupe_key]] = record
+            else:
+                records.append(record)
+                existing[dedupe_key] = len(records) - 1
+            if record.movie_page_url:
+                movie_details_cache[record.movie_page_url] = {
+                    "poster_url": record.poster_url,
+                    "description": record.description,
+                }
+        print(f"Imported {len(imported)} manual records from {args.manual_records}")
+
     seen_titles = {(record.year, record.title.lower()) for record in records}
+
     selected_languages = list(dict.fromkeys(args.languages))
     if args.prefer_south:
         input_order = {lang: idx for idx, lang in enumerate(selected_languages)}
-        selected_languages.sort(
-            key=lambda lang: (0 if lang in SOUTH_PRIORITY_LANGUAGES else 1, input_order[lang])
-        )
+        selected_languages.sort(key=lambda lang: (0 if lang in SOUTH_PRIORITY_LANGUAGES else 1, input_order[lang]))
 
-    tasks = [
+    all_tasks = [
         ScrapeTask(year=year, language=language)
         for year in range(args.start_year, args.end_year + 1)
         for language in selected_languages
     ]
+
+    if args.failed_only:
+        failed_set = set(failed_tasks.keys())
+        tasks = [task for task in all_tasks if task_key(task) in failed_set]
+    else:
+        tasks = all_tasks
 
     headers = {
         "User-Agent": (
@@ -388,36 +533,57 @@ def main() -> None:
                     log(f"Skipping completed task: {key}", args.verbose)
                     continue
 
-                task_records = scrape_task(session, task, seen_titles, movie_details_cache, args.verbose)
+                task_records, task_ok, task_error = scrape_task(
+                    task=task,
+                    session=session,
+                    headers=headers,
+                    seen_titles=seen_titles,
+                    movie_details_cache=movie_details_cache,
+                    workers=args.workers,
+                    request_delay=args.request_delay,
+                    verbose=args.verbose,
+                )
                 records.extend(task_records)
-                completed_tasks.add(key)
-                completed_since_start += 1
+                if task_ok:
+                    completed_tasks.add(key)
+                    failed_tasks.pop(key, None)
+                    completed_since_start += 1
+                else:
+                    failed_tasks[key] = task_error or "unknown_error"
 
-                save_checkpoint(checkpoint_path, args, completed_tasks, records, movie_details_cache)
+                save_checkpoint(checkpoint_path, args, completed_tasks, failed_tasks, records, movie_details_cache)
+                write_failed_tasks(failed_report_path, failed_tasks)
 
                 if args.pause_after > 0 and completed_since_start >= args.pause_after:
+                    records.sort(key=lambda rec: (rec.year, rec.language, rec.title.lower()))
+                    write_csv(args.output, records)
                     print(
-                        f"Paused after {completed_since_start} new tasks. "
+                        f"Paused after {completed_since_start} successful tasks. "
                         f"Resume with: --resume --checkpoint {checkpoint_path}"
                     )
-                    write_csv(args.output, sorted(records, key=lambda rec: (rec.year, rec.language, rec.title.lower())))
+                    print(f"Failed report: {failed_report_path}")
                     return
 
-                time.sleep(REQUEST_DELAY_SECONDS)
+                time.sleep(args.request_delay)
 
     except KeyboardInterrupt:
-        save_checkpoint(checkpoint_path, args, completed_tasks, records, movie_details_cache)
+        save_checkpoint(checkpoint_path, args, completed_tasks, failed_tasks, records, movie_details_cache)
+        write_failed_tasks(failed_report_path, failed_tasks)
         print(
             f"Interrupted. Progress saved to {checkpoint_path}. "
             f"Resume with: --resume --checkpoint {checkpoint_path}"
         )
+        print(f"Failed report: {failed_report_path}")
         return
 
     records.sort(key=lambda rec: (rec.year, rec.language, rec.title.lower()))
     write_csv(args.output, records)
-    save_checkpoint(checkpoint_path, args, completed_tasks, records, movie_details_cache)
+    save_checkpoint(checkpoint_path, args, completed_tasks, failed_tasks, records, movie_details_cache)
+    write_failed_tasks(failed_report_path, failed_tasks)
+
     print(f"Saved {len(records)} records to {args.output}")
     print(f"Checkpoint updated: {checkpoint_path}")
+    print(f"Failed tasks report: {failed_report_path} ({len(failed_tasks)} tasks)")
 
 
 if __name__ == "__main__":

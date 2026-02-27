@@ -9,6 +9,8 @@ It includes:
 - Poster URL extraction from each movie's Wikipedia page.
 - Description extraction from each movie page (first meaningful paragraph).
 - Pause/resume support with checkpoint files.
+- Parallel detail scraping for faster runs.
+- Failed-task tracking with manual recovery tools.
 
 ## Features
 
@@ -99,6 +101,12 @@ Custom output/checkpoint files:
 python3 horror_movies_scraper.py --output movies.csv --checkpoint progress.json
 ```
 
+Faster run (parallel detail fetching + lower delay):
+
+```bash
+python3 horror_movies_scraper.py --workers 16 --request-delay 0.15 --verbose
+```
+
 ## Pause and Resume
 
 Pause automatically after N completed tasks:
@@ -114,6 +122,41 @@ python3 horror_movies_scraper.py --resume --checkpoint indian_movies_scrape_prog
 ```
 
 If interrupted with `Ctrl+C`, progress is saved automatically and can be resumed.
+
+## Failed Tasks and Manual Recovery
+
+The scraper writes failed tasks to:
+- `failed_tasks.csv` (or your `--failed-report` path)
+
+Retry only failed tasks from checkpoint:
+
+```bash
+python3 horror_movies_scraper.py --resume --failed-only --verbose
+```
+
+Mark tasks complete manually (skip them in future runs):
+
+```bash
+python3 horror_movies_scraper.py --resume --manual-complete-task 2008:tamil --manual-complete-task 2012:indian
+```
+
+Import manual records to help progress:
+
+```bash
+python3 horror_movies_scraper.py --resume --manual-records manual_records.csv
+```
+
+`manual_records.csv` must include columns:
+- `year`
+- `language`
+- `title`
+- `movie_page_url`
+- `poster_url`
+- `description`
+- `source_url`
+
+Tip:
+- If a category task repeatedly fails, add key movies manually through `--manual-records`, then mark the task done with `--manual-complete-task YEAR:LANGUAGE`.
 
 ## Notes
 
