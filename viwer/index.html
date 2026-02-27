@@ -70,6 +70,16 @@
         }
 
         .hidden { display: none; }
+        .muted { color: #666; font-size: 12px; }
+        .load-more {
+            cursor: pointer;
+            background: #0b5ed7;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
     </style>
 </head>
 <body>
@@ -93,6 +103,7 @@
 </table>
 
 <h2>Movie Records</h2>
+<button id="recordsMoreBtn" class="load-more hidden" type="button">Load More Records</button>
 <table>
     <thead>
         <tr>
@@ -109,6 +120,7 @@
 
 <h2>Movie Details Cache</h2>
 <div class="toggle-btn" onclick="toggleCache()">Show / Hide Cache</div>
+<button id="cacheMoreBtn" class="load-more hidden" type="button">Load More Cache</button>
 
 <table id="cacheTable" class="hidden">
     <thead>
@@ -124,6 +136,92 @@
 function toggleCache() {
     document.getElementById("cacheTable").classList.toggle("hidden");
 }
+
+const RECORDS_BATCH_SIZE = 50;
+const CACHE_BATCH_SIZE = 30;
+const MAX_TEXT_LENGTH = 180;
+let recordsOffset = 0;
+let cacheOffset = 0;
+let recordsData = [];
+let cacheEntries = [];
+
+function truncateText(value, maxLen = MAX_TEXT_LENGTH) {
+    const text = String(value || "");
+    return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text;
+}
+
+function setButtonState(buttonId, isVisible, label) {
+    const btn = document.getElementById(buttonId);
+    if (!btn) return;
+    btn.classList.toggle("hidden", !isVisible);
+    if (label) btn.textContent = label;
+}
+
+function renderRecordsBatch() {
+    const table = document.getElementById('recordsTable');
+    const end = Math.min(recordsOffset + RECORDS_BATCH_SIZE, recordsData.length);
+    const fragment = document.createDocumentFragment();
+
+    for (let i = recordsOffset; i < end; i++) {
+        const movie = recordsData[i] || {};
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td><img loading="lazy" decoding="async" src="${movie.poster_url || ''}" alt="Poster"></td>
+            <td>${truncateText(movie.title, 120)}</td>
+            <td>${movie.year || ''}</td>
+            <td>${truncateText(movie.language, 80)}</td>
+            <td>${truncateText(movie.description, 220)}</td>
+            <td>
+                <a href="${movie.movie_page_url || '#'}" target="_blank" rel="noopener noreferrer">Movie Page</a><br>
+                <a href="${movie.source_url || '#'}" target="_blank" rel="noopener noreferrer">Source</a>
+            </td>
+        `;
+        fragment.appendChild(row);
+    }
+
+    table.appendChild(fragment);
+    recordsOffset = end;
+
+    setButtonState(
+        "recordsMoreBtn",
+        recordsOffset < recordsData.length,
+        `Load More Records (${recordsOffset}/${recordsData.length})`
+    );
+}
+
+function renderCacheBatch() {
+    const body = document.getElementById('cacheBody');
+    const end = Math.min(cacheOffset + CACHE_BATCH_SIZE, cacheEntries.length);
+    const fragment = document.createDocumentFragment();
+
+    for (let i = cacheOffset; i < end; i++) {
+        const [key, details] = cacheEntries[i];
+        const row = document.createElement('tr');
+        const compact = truncateText(JSON.stringify(details), 350);
+        row.innerHTML = `
+            <td>${truncateText(key, 120)}</td>
+            <td><pre>${compact}</pre></td>
+        `;
+        fragment.appendChild(row);
+    }
+
+    body.appendChild(fragment);
+    cacheOffset = end;
+
+    setButtonState(
+        "cacheMoreBtn",
+        cacheOffset < cacheEntries.length,
+        `Load More Cache (${cacheOffset}/${cacheEntries.length})`
+    );
+}
+
+document.getElementById("recordsMoreBtn").addEventListener("click", () => {
+    requestAnimationFrame(renderRecordsBatch);
+});
+
+document.getElementById("cacheMoreBtn").addEventListener("click", () => {
+    requestAnimationFrame(renderCacheBatch);
+});
 
 fetch('data.json')
     .then(res => res.json())
@@ -159,38 +257,26 @@ fetch('data.json')
         });
 
         // RECORDS
-        const recordsTable = document.getElementById('recordsTable');
-        (data.records || []).forEach(movie => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td><img src="${movie.poster_url}" alt="Poster"></td>
-                <td>${movie.title}</td>
-                <td>${movie.year}</td>
-                <td>${movie.language}</td>
-                <td>${movie.description.substring(0,150)}...</td>
-                <td>
-                    <a href="${movie.movie_page_url}" target="_blank">Movie Page</a><br>
-                    <a href="${movie.source_url}" target="_blank">Source</a>
-                </td>
-            `;
-            recordsTable.appendChild(row);
-        });
+        recordsData = data.records || [];
+        recordsOffset = 0;
+        if (recordsData.length === 0) {
+            document.getElementById('recordsTable').innerHTML =
+                `<tr><td colspan="6" class="muted">No records</td></tr>`;
+        } else {
+            renderRecordsBatch();
+        }
 
         // MOVIE DETAILS CACHE
         const cacheBody = document.getElementById('cacheBody');
         const cache = data.movie_details_cache || {};
+        cacheEntries = Object.entries(cache);
+        cacheOffset = 0;
+        cacheBody.innerHTML = "";
 
-        if (Object.keys(cache).length === 0) {
+        if (cacheEntries.length === 0) {
             cacheBody.innerHTML = `<tr><td colspan="2">No cached movie details</td></tr>`;
         } else {
-            Object.entries(cache).forEach(([key, details]) => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td>${key}</td>
-                    <td><pre>${JSON.stringify(details, null, 2)}</pre></td>
-                `;
-                cacheBody.appendChild(row);
-            });
+            renderCacheBatch();
         }
 
     })
