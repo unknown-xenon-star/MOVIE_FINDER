@@ -7,29 +7,40 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <h1>Indian Horror Movie Finder</h1>
-    <p class="subtitle">IMDb horror features from India</p>
-  </header>
+  <div class="page">
+    <header class="topbar">
+      <p class="eyebrow">Curated Catalog</p>
+      <h1>Indian Horror Movie Finder</h1>
+      <p class="subtitle">Browse IMDb horror features from India with faster scanning and cleaner sorting.</p>
+    </header>
 
-  <section class="controls">
-    <input id="searchInput" type="search" placeholder="Search by title..." />
-    <select id="sortSelect">
-      <option value="title_asc">Title A-Z</option>
-      <option value="year_desc">Year Newest</option>
-      <option value="year_asc">Year Oldest</option>
-      <option value="rating_desc">Rating High-Low</option>
-      <option value="votes_desc">Votes High-Low</option>
-    </select>
-    <button id="reloadBtn" type="button">Reload</button>
-  </section>
+    <section class="controls panel">
+      <label class="field field-search">
+        <span>Search title</span>
+        <input id="searchInput" type="search" placeholder="Try: Tumbbad, Bhoot, Stree..." />
+      </label>
 
-  <section class="status" id="status">Loading data...</section>
+      <label class="field">
+        <span>Sort by</span>
+        <select id="sortSelect">
+          <option value="title_asc">Title A-Z</option>
+          <option value="year_desc">Year Newest</option>
+          <option value="year_asc">Year Oldest</option>
+          <option value="rating_desc">Rating High-Low</option>
+          <option value="votes_desc">Votes High-Low</option>
+        </select>
+      </label>
 
-  <main>
-    <div id="grid" class="grid"></div>
-    <div id="sentinel" class="sentinel"></div>
-  </main>
+      <button id="reloadBtn" type="button">Reload Data</button>
+    </section>
+
+    <section class="status panel" id="status">Loading data...</section>
+
+    <main class="content">
+      <div id="grid" class="grid"></div>
+      <div id="sentinel" class="sentinel"></div>
+    </main>
+  </div>
 
   <template id="cardTemplate">
     <article class="card">
