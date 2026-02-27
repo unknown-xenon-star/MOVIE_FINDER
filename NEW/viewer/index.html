@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Indian Horror Movie Finder</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Indian Horror Movie Finder</h1>
+    <p class="subtitle">IMDb horror features from India</p>
+  </header>
+
+  <section class="controls">
+    <input id="searchInput" type="search" placeholder="Search by title..." />
+    <select id="sortSelect">
+      <option value="title_asc">Title A-Z</option>
+      <option value="year_desc">Year Newest</option>
+      <option value="year_asc">Year Oldest</option>
+      <option value="rating_desc">Rating High-Low</option>
+      <option value="votes_desc">Votes High-Low</option>
+    </select>
+    <button id="reloadBtn" type="button">Reload</button>
+  </section>
+
+  <section class="status" id="status">Loading data...</section>
+
+  <main>
+    <div id="grid" class="grid"></div>
+    <div id="sentinel" class="sentinel"></div>
+  </main>
+
+  <template id="cardTemplate">
+    <article class="card">
+      <a class="poster-link" target="_blank" rel="noopener noreferrer">
+        <img class="poster" alt="Movie poster" loading="lazy" />
+      </a>
+      <div class="body">
+        <h2 class="title"></h2>
+        <p class="meta"></p>
+        <p class="stats"></p>
+        <a class="imdb-link" target="_blank" rel="noopener noreferrer">Open IMDb</a>
+      </div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
