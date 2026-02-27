@@ -14,8 +14,58 @@ let filteredMovies = [];
 let renderedCount = 0;
 let isRendering = false;
 
+function parseNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string") return null;
+  const cleaned = value.replace(/[^\d.]/g, "");
+  if (!cleaned) return null;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseCount(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? Math.round(value) : null;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const compact = trimmed.replace(/[,\s()]/g, "");
+  const match = compact.match(/^(\d+(\.\d+)?)([kmb])?$/i);
+  if (!match) return null;
+  const base = Number(match[1]);
+  if (!Number.isFinite(base)) return null;
+  const suffix = (match[3] || "").toLowerCase();
+  const factor = suffix === "k" ? 1000 : suffix === "m" ? 1000000 : suffix === "b" ? 1000000000 : 1;
+  return Math.round(base * factor);
+}
+
+function cleanTitle(title) {
+  if (typeof title !== "string") return "";
+  return title.replace(/^\s*\d+\.\s*/, "").trim();
+}
+
+function normalizeMovie(movie) {
+  const title = cleanTitle(movie.title) || "Untitled";
+  const year = parseNumber(movie.year);
+  const rating = parseNumber(movie.rating);
+  const votes = parseCount(movie.votes);
+  const runtime = typeof movie.runtime === "string" && movie.runtime.trim()
+    ? movie.runtime.trim()
+    : "Runtime N/A";
+  const imdbUrl = movie.imdb_url || movie.url || (movie.imdb_id ? `https://www.imdb.com/title/${movie.imdb_id}/` : "#");
+
+  return {
+    ...movie,
+    title,
+    year,
+    rating,
+    votes,
+    runtime,
+    imdb_url: imdbUrl
+  };
+}
+
 function formatVotes(v) {
-  return typeof v === "number" ? v.toLocaleString() : "N/A";
+  return typeof v === "number" && Number.isFinite(v) ? v.toLocaleString() : "N/A";
 }
 
 function makeCard(movie) {
@@ -25,11 +75,14 @@ function makeCard(movie) {
   const title = node.querySelector(".title");
   const meta = node.querySelector(".meta");
   const stats = node.querySelector(".stats");
+  const description = node.querySelector(".description");
   const imdb = node.querySelector(".imdb-link");
 
   title.textContent = movie.title || "Untitled";
-  meta.textContent = `${movie.year || "Unknown year"} | ${movie.runtime || "Runtime N/A"}`;
-  stats.textContent = `Rating: ${movie.rating ?? "N/A"} | Votes: ${formatVotes(movie.votes)}`;
+  meta.textContent = `${movie.year || "Unknown year"} | ${movie.runtime}`;
+  const ratingLabel = typeof movie.rating === "number" && movie.rating > 0 ? movie.rating.toFixed(1) : "N/A";
+  stats.textContent = `Rating: ${ratingLabel} | Votes: ${formatVotes(movie.votes)}`;
+  description.textContent = movie.description || "No description available.";
 
   imdb.href = movie.imdb_url || "#";
 
@@ -118,7 +171,9 @@ async function loadData() {
   try {
     const res = await fetch(DATA_URL, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    allMovies = await res.json();
+    const raw = await res.json();
+    const list = Array.isArray(raw) ? raw : [];
+    allMovies = list.map(normalizeMovie);
     applyFilters(true);
   } catch (err) {
     statusEl.textContent = "Failed to load data. Run a local server and make sure output/data/movies.json exists.";

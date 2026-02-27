@@ -1,32 +1,34 @@
 :root {
-  --bg: #f6f3ee;
-  --paper: #fffdf8;
-  --ink: #1e1a16;
-  --muted: #5b5147;
-  --accent: #b83a22;
-  --line: #d9cdbf;
+  --bg: #f7f6f1;
+  --paper: #fdfcf9;
+  --ink: #1f1a14;
+  --muted: #5f5549;
+  --accent: #a6341b;
+  --line: #ddcfbd;
+  --shadow: 0 16px 40px rgba(45, 28, 11, 0.08);
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: "Palatino Linotype", "Book Antiqua", Palatino, serif;
   background:
-    radial-gradient(circle at 10% 10%, #efe5d8 0%, transparent 35%),
-    radial-gradient(circle at 90% 0%, #f0e4d3 0%, transparent 30%),
+    radial-gradient(circle at 10% 5%, #ece1cf 0%, transparent 35%),
+    radial-gradient(circle at 92% 0%, #f3e3c8 0%, transparent 32%),
     var(--bg);
   color: var(--ink);
 }
 
 .topbar {
-  padding: 1.5rem 1rem 1rem;
+  padding: 1.8rem 1rem 1rem;
   text-align: center;
 }
 
 .topbar h1 {
   margin: 0;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
+  font-size: clamp(1.4rem, 3vw, 2rem);
 }
 
 .subtitle {
@@ -58,6 +60,7 @@ button {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+  font-weight: 700;
 }
 
 .status {
@@ -81,47 +84,65 @@ main {
 
 .card {
   display: grid;
-  grid-template-columns: 100px 1fr;
-  gap: 0.8rem;
+  grid-template-columns: 108px 1fr;
+  gap: 0.9rem;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--paper);
   overflow: hidden;
+  box-shadow: var(--shadow);
 }
 
 .poster-link {
   display: block;
-  background: #ddd;
+  background: #d8d1c5;
 }
 
 .poster {
   width: 100%;
   height: 100%;
-  min-height: 140px;
+  min-height: 168px;
   object-fit: cover;
   display: block;
-  filter: saturate(0.95);
+  filter: saturate(0.96);
 }
 
 .body {
-  padding: 0.75rem 0.8rem 0.8rem 0;
+  padding: 0.8rem 0.85rem 0.85rem 0;
+  display: grid;
+  gap: 0.4rem;
+  align-content: start;
 }
 
 .title {
   margin: 0;
   font-size: 1.05rem;
+  line-height: 1.25;
 }
 
 .meta, .stats {
-  margin: 0.35rem 0;
+  margin: 0;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.description {
+  margin: 0.1rem 0 0.15rem;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  color: #3f362d;
 }
 
 .imdb-link {
   color: var(--accent);
   text-decoration: none;
   font-weight: 600;
+  width: fit-content;
+  border-bottom: 1px solid transparent;
+}
+
+.imdb-link:hover {
+  border-bottom-color: var(--accent);
 }
 
 .sentinel {
@@ -135,6 +156,7 @@ main {
 
   .grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
   }
 }
 
